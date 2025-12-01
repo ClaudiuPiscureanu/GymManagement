@@ -1,0 +1,12 @@
+Personal trainer digitale
+
+Si vuole realizzare un’applicazione per consentire, ai personal trainer di una palestra, di gestire le schede degli esercizi dei propri clienti.
+
+Ciascun utente della palestra è associato ad un personal trainer di riferimento. Questi potrà redigere una scheda di allenamento personalizzata per ciascun utente, scegliendo gli esercizi e i macchinari da utilizzare in un insieme definito dal proprietario della palestra. Per ciascun esercizio, il personal trainer indicherà anche il numero di serie e ripetizioni dell’esercizio.
+
+Periodicamente, quando viene redatta una nuova scheda di esercizi, la scheda precedente viene archiviata. Questa sarà ancora consultabile dagli utenti, ma essi potranno “interagire” solo con quella corrente.
+Gli utenti della palestra possono infatti accedere all’applicazione e mostrare quali sono gli esercizi che devono svolgere in una sessione di allenamento. Il sistema mostrerà l’esercizio e la serie corrente, permettendo all’utente di contrassegnare un dato esercizio come completato. L’atleta ha la possibilità di saltare un esercizio, anche se cominciato, e passare al successivo.
+
+I personal trainer possono generare un report che mostra, per tutti i clienti a loro assegnati, quanti sono gli allenamenti sostenuti in un intervallo temporale richiesto, qual è la percentuale di completamento delle schede di allenamento in ogni sessione di allenamento e quanto tempo è durato ciascun allenamento.
+
+
