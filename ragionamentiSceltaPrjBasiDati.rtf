@@ -1,0 +1,39 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2868
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\froman\fcharset0 TimesNewRomanPS-BoldMT;\f1\froman\fcharset0 TimesNewRomanPS-ItalicMT;\f2\froman\fcharset0 TimesNewRomanPSMT;
+}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\cssrgb\c0\c0\c0;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww14500\viewh15300\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\b\fs36 \cf0 RAGIONAMENTI SCELTE PROGETTUALI BASI DI DATI:\
+\
+\
+
+\f1\i\b0\fs28  )) Ridondanza
+\f2\i0  
+\f1\i attributi idPr in ATLETA E SCEHDA:\
+\pard\pardeftab720\sa240\partightenfactor0
+
+\f2\i0\fs24 \cf0 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 L'idea: il PT si trova risalendo da Atleta \uc0\u8594  Scheda \u8594  idPr.\
+Problema serio: questa logica regge solo se ogni atleta ha sempre almeno una scheda. Ma un atleta appena iscritto, prima che il PT gli crei la prima scheda, non ha ancora nessuna scheda. In quel momento il suo PT di riferimento sarebbe irrecuperabile.\
+Inoltre la relazione "un atleta \'e8 assegnato a un PT di riferimento" \'e8 una propriet\'e0 dell'atleta stesso, non della scheda. La scheda registra chi ha redatto quella scheda in quel momento, che potrebbe anche cambiare nel tempo se il PT cambia.\
+Complicazione futura nel client Java: ogni volta che vuoi mostrare "il tuo PT di riferimento" devi fare una query con JOIN e prendere l'idPr dalla scheda pi\'f9 recente, con un ORDER BY dataCreazione DESC LIMIT 1. Fragile e pi\'f9 costoso.\
+\
+\
+))
+\f1\i\fs28  
+\f2\i0\fs24 Ridondanza tra utente, pr e tabella utente\
+Perch\'e9 la tabella Utenti separata \'e8 la scelta giusta\
+Atleta e PersonalTrainer sono entit\'e0 del dominio applicativo \'97 rappresentano persone con dati anagrafici (nome, cognome, cf, email...).\
+Utenti \'e8 un'entit\'e0 di autenticazione \'97 rappresenta le credenziali di accesso al sistema.\
+Sono due concetti distinti che rispondono a domande diverse. Tenerle separate rispetta il Single Responsibility Principle anche a livello di schema.\
+Perch\'e9 NON mettere password in Atleta/PR\
+Problema 1 \'97 Sicurezza\
+Se un giorno esporti i dati anagrafici per un report, rischi di portarti dietro le password. Con la tabella separata, i dati sensibili sono isolati.\
+Problema 2 \'97 Flessibilit\'e0\
+Con Utenti separata, domani puoi aggiungere un campo ultimo_accesso, tentativi_falliti, token_reset senza toccare le tabelle anagrafiche.\
+Problema 3 \'97 Il proprietario\
+Il proprietario \'e8 un utente del sistema ma non ha una tabella anagrafica nel tuo schema. Con Utenti separata gestisci tutti e tre i ruoli in modo uniforme. Se metti la password in Atleta e PersonalTrainer, il proprietario dove la metti?\
+}
