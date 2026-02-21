@@ -1,0 +1,304 @@
+-- ============================================================
+--  PERSONAL TRAINER DIGITALE
+--  Stored Procedures - Ruolo: PERSONAL TRAINER
+-- ============================================================
+
+USE palestra;
+
+-- ============================================================
+--  PT1 - crea_scheda
+--  Crea una nuova scheda per un atleta del PT chiamante.
+--  Archivia la scheda corrente precedente e inserisce
+--  i nuovi esercizi uno per uno.
+--
+--  Parametri esercizi passati singolarmente con prefisso
+--  progressivo — approccio semplice compatibile con JDBC
+--  CallableStatement senza JSON.
+--
+--  Isolamento REPEATABLE READ: operazione critica che
+--  coinvolge letture e scritture su più tabelle.
+--  Garantisce che la scheda corrente letta non venga
+--  modificata da transazioni concorrenti nel mezzo
+--  dell operazione.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `crea_scheda`;
+
+DELIMITER $$
+CREATE PROCEDURE `crea_scheda`(
+    IN var_idPr         INT,
+    IN var_idAtleta     INT
+)
+BEGIN
+    DECLARE var_atleta_count    INT;
+    DECLARE var_idScheda        INT;
+
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+        BEGIN
+            ROLLBACK;
+            RESIGNAL;
+        END;
+
+    SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    START TRANSACTION;
+
+    -- Verifica che l atleta sia assegnato a questo PT
+    SELECT COUNT(*) INTO var_atleta_count
+    FROM Atleta
+    WHERE idAtleta = var_idAtleta
+      AND idPr     = var_idPr;
+
+    IF var_atleta_count = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Atleta non trovato o non assegnato a questo Personal Trainer.';
+    END IF;
+
+    -- Archivia la scheda corrente se esiste
+    -- (il trigger trg_scheda_before_insert lo fa automaticamente,
+    --  ma lo rendiamo esplicito per chiarezza e controllo)
+    UPDATE Scheda
+    SET    dataArchiviazione = CURDATE()
+    WHERE  idAtleta          = var_idAtleta
+      AND  dataArchiviazione IS NULL;
+
+    -- Crea la nuova scheda corrente
+    INSERT INTO Scheda (idAtleta, idPr, dataCreazione, dataArchiviazione)
+    VALUES (var_idAtleta, var_idPr, CURDATE(), NULL);
+
+    SET var_idScheda = LAST_INSERT_ID();
+
+    COMMIT;
+
+    -- Restituisce l id della nuova scheda al client
+    -- Il client Java userà questo id per le chiamate successive
+    -- a aggiungi_esercizio_scheda
+    SELECT var_idScheda AS idScheda;
+
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  PT2 - aggiungi_esercizio_scheda
+--  Aggiunge un singolo esercizio a una scheda esistente.
+--  Viene chiamata dal client Java una volta per ogni
+--  esercizio dopo aver creato la scheda con crea_scheda.
+--
+--  Isolamento READ COMMITTED: operazione di scrittura
+--  singola senza dipendenze critiche tra righe.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `aggiungi_esercizio_scheda`;
+
+DELIMITER $$
+CREATE PROCEDURE `aggiungi_esercizio_scheda`(
+    IN var_idPr         INT,
+    IN var_idScheda     INT,
+    IN var_idEsercizio  INT,
+    IN var_numero       TINYINT,
+    IN var_serie        TINYINT,
+    IN var_ripetizioni  TINYINT,
+    IN var_peso         DECIMAL(5,2)    -- NULL se non applicabile
+)
+BEGIN
+    DECLARE var_scheda_count    INT;
+
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+        BEGIN
+            ROLLBACK;
+            RESIGNAL;
+        END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    START TRANSACTION;
+
+    -- Verifica che la scheda appartenga a un atleta del PT
+    -- e che sia ancora corrente
+    SELECT COUNT(*) INTO var_scheda_count
+    FROM Scheda s
+             JOIN Atleta a ON a.idAtleta = s.idAtleta
+    WHERE s.idScheda          = var_idScheda
+      AND a.idPr              = var_idPr
+      AND s.dataArchiviazione IS NULL;
+
+    IF var_scheda_count = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Scheda non trovata, archiviata o non di tua competenza.';
+    END IF;
+
+    INSERT INTO EsercizioScheda (idScheda, idEsercizio, numero, serie, ripetizioni, peso)
+    VALUES (var_idScheda, var_idEsercizio, var_numero, var_serie, var_ripetizioni, var_peso);
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  PT3 - lista_clienti
+--  Restituisce gli atleti assegnati al PT chiamante
+--  con i dati anagrafici essenziali.
+--
+--  Isolamento READ COMMITTED: sola lettura, nessun
+--  requisito di consistenza forte.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `lista_clienti`;
+
+DELIMITER $$
+CREATE PROCEDURE `lista_clienti`(
+    IN var_idPr INT
+)
+BEGIN
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+        BEGIN
+            ROLLBACK;
+            RESIGNAL;
+        END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    SET TRANSACTION READ ONLY;
+    START TRANSACTION;
+
+    SELECT
+        a.idAtleta,
+        a.nome,
+        a.cognome,
+        a.cf,
+        a.email,
+        a.dataNascita,
+        a.dataIscrizione,
+        -- Mostra se l atleta ha una scheda corrente
+        CASE
+            WHEN EXISTS (
+                SELECT 1 FROM Scheda s
+                WHERE s.idAtleta          = a.idAtleta
+                  AND s.dataArchiviazione IS NULL
+            )
+                THEN 'SI'
+            ELSE 'NO'
+            END AS haSchedaCorrente
+    FROM Atleta a
+    WHERE a.idPr = var_idPr
+    ORDER BY a.cognome, a.nome;
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  PT4 - lista_esercizi_disponibili
+--  Restituisce tutti gli esercizi disponibili in palestra
+--  con l attrezzatura associata. Usata dal PT durante
+--  la composizione di una nuova scheda.
+--
+--  Isolamento READ COMMITTED: sola lettura semplice.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `lista_esercizi_disponibili`;
+
+DELIMITER $$
+CREATE PROCEDURE `lista_esercizi_disponibili`()
+BEGIN
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+        BEGIN
+            ROLLBACK;
+            RESIGNAL;
+        END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    SET TRANSACTION READ ONLY;
+    START TRANSACTION;
+
+    SELECT
+        e.idEsercizio,
+        e.nome,
+        e.descrizione,
+        e.gruppoMuscolare,
+        COALESCE(a.nome, 'Corpo libero') AS attrezzatura,
+        a.idAttrezzatura
+    FROM Esercizio e
+             LEFT JOIN Attrezzatura a ON a.idAttrezzatura = e.idAttrezzatura
+    ORDER BY e.gruppoMuscolare, e.nome;
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  PT5 - report_sessioni
+--  Restituisce per ogni cliente del PT, in un intervallo
+--  di date, le sessioni effettuate con:
+--  - data e durata della sessione
+--  - percentuale di completamento
+--  Corrisponde esattamente alla funzionalità descritta
+--  nella specifica del professore.
+--
+--  Isolamento REPEATABLE READ: report che aggrega dati
+--  da più tabelle — garantisce una vista consistente
+--  dell intero intervallo temporale richiesto.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `report_sessioni`;
+
+DELIMITER $$
+CREATE PROCEDURE `report_sessioni`(
+    IN var_idPr         INT,
+    IN var_dataInizio   DATE,
+    IN var_dataFine     DATE
+)
+BEGIN
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+        BEGIN
+            ROLLBACK;
+            RESIGNAL;
+        END;
+
+    SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    SET TRANSACTION READ ONLY;
+    START TRANSACTION;
+
+    SELECT
+        a.idAtleta,
+        a.nome                                          AS nomeAtleta,
+        a.cognome                                       AS cognomeAtleta,
+        al.idAllenamento,
+        al.data,
+        al.oraInizio,
+        al.oraFine,
+        TIMEDIFF(al.oraFine, al.oraInizio)              AS durata,
+        al.percentualeCompletamento,
+        -- Conteggio sessioni per atleta nell intervallo
+        COUNT(al.idAllenamento) OVER (
+            PARTITION BY a.idAtleta
+            )                                               AS totSessioniAtleta
+    FROM Atleta a
+             JOIN Scheda       s  ON s.idAtleta  = a.idAtleta
+             JOIN Allenamento  al ON al.idScheda = s.idScheda
+    WHERE a.idPr    =  var_idPr
+      AND al.data  BETWEEN var_dataInizio AND var_dataFine
+    ORDER BY a.cognome, a.nome, al.data, al.oraInizio;
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  GRANT - Privilegi utente MySQL 'personal_trainer'
+-- ============================================================
+
+SET SQL_MODE = '';
+GRANT USAGE ON *.* TO 'personal_trainer'@'localhost';
+DROP USER IF EXISTS 'personal_trainer'@'localhost';
+SET SQL_MODE = 'TRADITIONAL,ALLOW_INVALID_DATES';
+
+CREATE USER 'personal_trainer'@'localhost' IDENTIFIED BY 'personal_trainer';
+
+GRANT EXECUTE ON PROCEDURE palestra.crea_scheda                  TO 'personal_trainer'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.aggiungi_esercizio_scheda    TO 'personal_trainer'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.lista_clienti                TO 'personal_trainer'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.lista_esercizi_disponibili   TO 'personal_trainer'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.report_sessioni              TO 'personal_trainer'@'localhost';

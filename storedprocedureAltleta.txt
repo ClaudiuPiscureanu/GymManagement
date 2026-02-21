@@ -1,0 +1,449 @@
+-- ============================================================
+--  PERSONAL TRAINER DIGITALE
+--  Stored Procedures - Ruolo: ATLETA
+-- ============================================================
+
+USE palestra;
+
+-- ============================================================
+--  A1 - visualizza_scheda_corrente
+--  Restituisce la scheda corrente dell atleta con la lista
+--  degli esercizi ordinati per numero.
+--  Verifica che l atleta abbia una scheda corrente.
+--
+--  Isolamento READ COMMITTED: sola lettura, nessun
+--  requisito di consistenza forte.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `visualizza_scheda_corrente`;
+
+DELIMITER $$
+CREATE PROCEDURE `visualizza_scheda_corrente`(
+    IN var_idAtleta INT
+)
+BEGIN
+    DECLARE var_scheda_count INT;
+
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    SET TRANSACTION READ ONLY;
+    START TRANSACTION;
+
+        -- Verifica che esista una scheda corrente
+        SELECT COUNT(*) INTO var_scheda_count
+        FROM Scheda
+        WHERE idAtleta          = var_idAtleta
+          AND dataArchiviazione IS NULL;
+
+        IF var_scheda_count = 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Nessuna scheda corrente trovata per questo atleta.';
+        END IF;
+
+        SELECT
+            s.idScheda,
+            s.dataCreazione,
+            pt.nome                             AS nomePT,
+            pt.cognome                          AS cognomePT,
+            es.numero,
+            e.idEsercizio,
+            e.nome                              AS nomeEsercizio,
+            e.descrizione,
+            e.gruppoMuscolare,
+            es.serie,
+            es.ripetizioni,
+            es.peso,
+            COALESCE(a.nome, 'Corpo libero')    AS attrezzatura
+        FROM Scheda             s
+        JOIN PersonalTrainer    pt  ON pt.idPr           = s.idPr
+        JOIN EsercizioScheda    es  ON es.idScheda        = s.idScheda
+        JOIN Esercizio          e   ON e.idEsercizio      = es.idEsercizio
+        LEFT JOIN Attrezzatura  a   ON a.idAttrezzatura   = e.idAttrezzatura
+        WHERE s.idAtleta          = var_idAtleta
+          AND s.dataArchiviazione IS NULL
+        ORDER BY es.numero;
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  A2 - visualizza_schede_archiviate
+--  Restituisce la lista delle schede archiviate dell atleta
+--  con data creazione e data archiviazione.
+--
+--  Isolamento READ COMMITTED: sola lettura semplice.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `visualizza_schede_archiviate`;
+
+DELIMITER $$
+CREATE PROCEDURE `visualizza_schede_archiviate`(
+    IN var_idAtleta INT
+)
+BEGIN
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    SET TRANSACTION READ ONLY;
+    START TRANSACTION;
+
+        SELECT
+            s.idScheda,
+            s.dataCreazione,
+            s.dataArchiviazione,
+            DATEDIFF(s.dataArchiviazione, s.dataCreazione)  AS durataGiorni,
+            pt.nome                                          AS nomePT,
+            pt.cognome                                       AS cognomePT,
+            COUNT(es.idEsercizio)                            AS numEsercizi
+        FROM Scheda             s
+        JOIN PersonalTrainer    pt  ON pt.idPr       = s.idPr
+        JOIN EsercizioScheda    es  ON es.idScheda   = s.idScheda
+        WHERE s.idAtleta           = var_idAtleta
+          AND s.dataArchiviazione  IS NOT NULL
+        GROUP BY s.idScheda, s.dataCreazione, s.dataArchiviazione,
+                 pt.nome, pt.cognome
+        ORDER BY s.dataArchiviazione DESC;
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  A3 - visualizza_scheda_archiviata
+--  Restituisce il dettaglio completo di una scheda archiviata.
+--  Verifica che la scheda appartenga all atleta e che
+--  sia effettivamente archiviata.
+--
+--  Isolamento READ COMMITTED: sola lettura.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `visualizza_scheda_archiviata`;
+
+DELIMITER $$
+CREATE PROCEDURE `visualizza_scheda_archiviata`(
+    IN var_idAtleta INT,
+    IN var_idScheda INT
+)
+BEGIN
+    DECLARE var_count INT;
+
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    SET TRANSACTION READ ONLY;
+    START TRANSACTION;
+
+        -- Verifica che la scheda esista, sia dell atleta e sia archiviata
+        SELECT COUNT(*) INTO var_count
+        FROM Scheda
+        WHERE idScheda          = var_idScheda
+          AND idAtleta          = var_idAtleta
+          AND dataArchiviazione IS NOT NULL;
+
+        IF var_count = 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Scheda non trovata, non archiviata o non di tua proprieta.';
+        END IF;
+
+        SELECT
+            s.idScheda,
+            s.dataCreazione,
+            s.dataArchiviazione,
+            pt.nome                             AS nomePT,
+            pt.cognome                          AS cognomePT,
+            es.numero,
+            e.idEsercizio,
+            e.nome                              AS nomeEsercizio,
+            e.descrizione,
+            e.gruppoMuscolare,
+            es.serie,
+            es.ripetizioni,
+            es.peso,
+            COALESCE(a.nome, 'Corpo libero')    AS attrezzatura
+        FROM Scheda             s
+        JOIN PersonalTrainer    pt  ON pt.idPr           = s.idPr
+        JOIN EsercizioScheda    es  ON es.idScheda        = s.idScheda
+        JOIN Esercizio          e   ON e.idEsercizio      = es.idEsercizio
+        LEFT JOIN Attrezzatura  a   ON a.idAttrezzatura   = e.idAttrezzatura
+        WHERE s.idScheda = var_idScheda
+        ORDER BY es.numero;
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  A4 - inizia_allenamento
+--  Crea un nuovo record in Allenamento associato alla
+--  scheda corrente dell atleta.
+--  Verifica che la scheda sia corrente (non archiviata).
+--  Restituisce l idAllenamento per le operazioni successive.
+--
+--  Isolamento REPEATABLE READ: la verifica della scheda
+--  corrente e l inserimento devono essere atomici —
+--  nessuna transazione concorrente deve poter archiviare
+--  la scheda nel mezzo dell operazione.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `inizia_allenamento`;
+
+DELIMITER $$
+CREATE PROCEDURE `inizia_allenamento`(
+    IN  var_idAtleta    INT,
+    IN  var_oraInizio   TIME,
+    OUT var_idAllenamento INT
+)
+BEGIN
+    DECLARE var_idScheda    INT;
+    DECLARE var_count       INT;
+
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    START TRANSACTION;
+
+        -- Recupera la scheda corrente dell atleta
+        SELECT idScheda INTO var_idScheda
+        FROM Scheda
+        WHERE idAtleta          = var_idAtleta
+          AND dataArchiviazione IS NULL;
+
+        IF var_idScheda IS NULL THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Nessuna scheda corrente. Contatta il tuo Personal Trainer.';
+        END IF;
+
+        -- Verifica che non esista già un allenamento aperto
+        -- (stesso atleta, stessa data, stessa ora di inizio)
+        SELECT COUNT(*) INTO var_count
+        FROM Allenamento
+        WHERE idScheda  = var_idScheda
+          AND data      = CURDATE()
+          AND oraInizio = var_oraInizio;
+
+        IF var_count > 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Esiste gia un allenamento registrato per questo orario.';
+        END IF;
+
+        -- Inserisce l allenamento con oraFine = oraInizio
+        -- (verrà aggiornata da termina_allenamento)
+        -- percentualeCompletamento inizia a 0
+        INSERT INTO Allenamento (idScheda, data, oraInizio, oraFine, percentualeCompletamento)
+        VALUES (var_idScheda, CURDATE(), var_oraInizio, var_oraInizio, 0);
+
+        SET var_idAllenamento = LAST_INSERT_ID();
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  A5 - svolgi_esercizio
+--  Registra un esercizio come completato o saltato.
+--  Verifica che:
+--  1. L allenamento appartenga all atleta
+--  2. L esercizio appartenga alla scheda dell allenamento
+--  3. L esercizio non sia già stato registrato
+--     (dopo saltato non è possibile rieffettuarlo)
+--
+--  Isolamento REPEATABLE READ: lettura + scrittura su
+--  EsercizioSvolto, la verifica del duplicato e
+--  l inserimento devono essere atomici.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `svolgi_esercizio`;
+
+DELIMITER $$
+CREATE PROCEDURE `svolgi_esercizio`(
+    IN var_idAtleta     INT,
+    IN var_idAllenamento INT,
+    IN var_idEsercizio  INT,
+    IN var_completato   TINYINT(1)  -- 1 = completato, 0 = saltato
+)
+BEGIN
+    DECLARE var_all_count   INT;
+    DECLARE var_ese_count   INT;
+    DECLARE var_gia_svolto  INT;
+    DECLARE var_perc        TINYINT;
+
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    START TRANSACTION;
+
+        -- Verifica che l allenamento appartenga all atleta
+        SELECT COUNT(*) INTO var_all_count
+        FROM Allenamento  al
+        JOIN Scheda        s  ON s.idScheda  = al.idScheda
+        WHERE al.idAllenamento = var_idAllenamento
+          AND s.idAtleta       = var_idAtleta;
+
+        IF var_all_count = 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Allenamento non trovato o non di tua proprieta.';
+        END IF;
+
+        -- Verifica che l esercizio appartenga alla scheda
+        SELECT COUNT(*) INTO var_ese_count
+        FROM Allenamento        al
+        JOIN EsercizioScheda    es  ON es.idScheda      = al.idScheda
+        WHERE al.idAllenamento  = var_idAllenamento
+          AND es.idEsercizio    = var_idEsercizio;
+
+        IF var_ese_count = 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Esercizio non presente in questa scheda.';
+        END IF;
+
+        -- Verifica che l esercizio non sia già stato registrato
+        SELECT COUNT(*) INTO var_gia_svolto
+        FROM EsercizioSvolto
+        WHERE idAllenamento = var_idAllenamento
+          AND idEsercizio   = var_idEsercizio;
+
+        IF var_gia_svolto > 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Esercizio gia registrato. Non e possibile modificarlo.';
+        END IF;
+
+        -- Determina la percentuale in base al flag
+        SET var_perc = CASE WHEN var_completato = 1 THEN 100 ELSE 0 END;
+
+        INSERT INTO EsercizioSvolto (idAllenamento, idEsercizio, percCompletamento)
+        VALUES (var_idAllenamento, var_idEsercizio, var_perc);
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  A6 - termina_allenamento
+--  Chiude la sessione registrando l ora di fine e
+--  calcolando la percentuale di completamento come:
+--  (esercizi completati / totale esercizi scheda) * 100
+--
+--  Isolamento REPEATABLE READ: legge EsercizioSvolto
+--  ed EsercizioScheda per il calcolo e poi aggiorna
+--  Allenamento — tutto deve essere consistente.
+-- ============================================================
+
+DROP PROCEDURE IF EXISTS `termina_allenamento`;
+
+DELIMITER $$
+CREATE PROCEDURE `termina_allenamento`(
+    IN var_idAtleta         INT,
+    IN var_idAllenamento    INT,
+    IN var_oraFine          TIME
+)
+BEGIN
+    DECLARE var_count           INT;
+    DECLARE var_totEsercizi     INT;
+    DECLARE var_completati      INT;
+    DECLARE var_percentuale     TINYINT;
+    DECLARE var_oraInizio       TIME;
+
+    DECLARE exit HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    START TRANSACTION;
+
+        -- Verifica che l allenamento appartenga all atleta
+        SELECT COUNT(*) INTO var_count
+        FROM Allenamento  al
+        JOIN Scheda        s ON s.idScheda = al.idScheda
+        WHERE al.idAllenamento = var_idAllenamento
+          AND s.idAtleta       = var_idAtleta;
+
+        IF var_count = 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Allenamento non trovato o non di tua proprieta.';
+        END IF;
+
+        -- Recupera ora di inizio per validare ora di fine
+        SELECT oraInizio INTO var_oraInizio
+        FROM Allenamento
+        WHERE idAllenamento = var_idAllenamento;
+
+        IF var_oraFine <= var_oraInizio THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'L ora di fine deve essere successiva all ora di inizio.';
+        END IF;
+
+        -- Calcola totale esercizi nella scheda
+        SELECT COUNT(*) INTO var_totEsercizi
+        FROM Allenamento        al
+        JOIN EsercizioScheda    es ON es.idScheda = al.idScheda
+        WHERE al.idAllenamento = var_idAllenamento;
+
+        -- Calcola esercizi completati (percCompletamento = 100)
+        SELECT COUNT(*) INTO var_completati
+        FROM EsercizioSvolto
+        WHERE idAllenamento     = var_idAllenamento
+          AND percCompletamento = 100;
+
+        -- Calcola percentuale (gestisce divisione per zero)
+        SET var_percentuale = CASE
+            WHEN var_totEsercizi = 0 THEN 0
+            ELSE ROUND((var_completati / var_totEsercizi) * 100)
+        END;
+
+        -- Aggiorna l allenamento con ora fine e percentuale
+        UPDATE Allenamento
+        SET oraFine                  = var_oraFine,
+            percentualeCompletamento = var_percentuale
+        WHERE idAllenamento = var_idAllenamento;
+
+    COMMIT;
+END$$
+DELIMITER ;
+
+
+-- ============================================================
+--  GRANT - Privilegi utente MySQL 'atleta'
+-- ============================================================
+
+SET SQL_MODE = '';
+GRANT USAGE ON *.* TO 'atleta'@'localhost';
+DROP USER IF EXISTS 'atleta'@'localhost';
+SET SQL_MODE = 'TRADITIONAL,ALLOW_INVALID_DATES';
+
+CREATE USER 'atleta'@'localhost' IDENTIFIED BY 'atleta';
+
+GRANT EXECUTE ON PROCEDURE palestra.visualizza_scheda_corrente   TO 'atleta'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.visualizza_schede_archiviate TO 'atleta'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.visualizza_scheda_archiviata TO 'atleta'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.inizia_allenamento           TO 'atleta'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.svolgi_esercizio             TO 'atleta'@'localhost';
+GRANT EXECUTE ON PROCEDURE palestra.termina_allenamento          TO 'atleta'@'localhost';
